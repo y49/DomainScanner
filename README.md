@@ -28,7 +28,7 @@ DomainScanner 是一个基于 Go + HTML/JS 的开源域名扫描工具，能够�
    - 后缀通过后端 `whoisServers` 自动生成列表，前端可勾选需要的后缀，如 `.com`, `.cn`, `.net` 等。
 
 6. **便捷的前端页面**  
-   - 使用 HTML + JS + (可选)Bootstrap 等在线样式库，美观地展示扫描进度与日志。
+   - 使用 HTML + JS，美观地展示扫描进度与日志。
 
 ## 目录结构
 
