@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>域名扫描</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      display: flex;
+      flex-direction: column; /* 改为纵向排版, 上方操作, 下方说明 */
+    }
+    .controls-row {
+      display: flex;
+      flex-direction: row;
+    }
+    .left-panel {
+      flex: 1;
+      margin-right: 20px;
+    }
+    .log-container {
+      width: 600px;
+      height: 300px;
+      border: 1px solid #ccc;
+      overflow: auto;
+      padding: 5px;
+    }
+    .log-line {
+      margin: 0;
+      padding: 0;
+      font-size: 14px;
+      line-height: 1.2;
+      font-family: monospace;
+    }
+    .error-line {
+      color: red;
+      font-weight: bold;
+    }
+    .check-label {
+      margin-left: 10px;
+    }
+    .failed-flag {
+      color: #fff;
+      background: red;
+      padding: 2px 5px;
+      display: inline-block;
+      margin-left: 10px;
+    }
+    .right-panel {
+      width: 280px;
+      flex-shrink: 0;
+      border-left: 1px solid #ccc;
+      padding-left: 15px;
+    }
+    .available-list {
+      width: 100%;
+      height: 300px;
+      border: 1px solid #ccc;
+      overflow: auto;
+      padding: 5px;
+      font-family: monospace;
+      font-size: 14px;
+    }
+    .patterns-guide {
+      margin-top: 20px;
+      padding: 10px;
+      border: 1px solid #ccc;
+      background: #fafafa;
+    }
+    .patterns-guide h3 {
+      margin: 0 0 5px 0;
+    }
+    .patterns-guide ul {
+      list-style-type: disc;
+      padding-left: 20px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="controls-row">
+  <!-- 左侧主面板 -->
+  <div class="left-panel">
+    <h1>域名扫描</h1>
+
+    <div style="margin-bottom:10px;">
+      <label>后端地址: </label>
+      <input type="text" id="backendUrl" value="http://127.0.0.1:8080" style="width:240px" />
+    </div>
+
+    <!-- 模式选择: old/style/literal -->
+    <div style="margin-bottom:10px;">
+      <label>扫描模式: </label>
+      <select id="modeSelect">
+        <option value="old">标准模式</option>
+        <option value="style">风格模式</option>
+        <option value="literal">Literal (直接当域名主体)</option>
+      </select>
+    </div>
+
+    <div style="margin-bottom:10px;">
+      <label>Patterns (逗号分隔):</label>
+      <input type="text" id="patterns" style="width:180px" placeholder="如: AABB,ABAB,example" />
+    </div>
+
+    <!-- 用 <details> 包裹后缀 checkbox -->
+    <div style="margin-bottom:10px;">
+      <details>
+        <summary>可选后缀 (点击展开选择)</summary>
+        <div id="suffixesContainer" style="margin-left:20px;">
+          <!-- 这里通过 fetchSuffixes() 动态添加 checkbox -->
+        </div>
+      </details>
+    </div>
+
+    <div style="margin-bottom:10px;">
+      <label>并发数: </label>
+      <input type="number" id="concurrency" value="5" style="width:50px" />
+    </div>
+
+    <div style="margin-top:10px;">
+      <button onclick="startScan()">开始扫描</button>
+      <button onclick="pauseScan()">暂停</button>
+      <button onclick="resumeScan()">继续</button>
+      <button onclick="stopScan()">终止</button>
+      <span id="failedFlag" class="failed-flag" style="display:none;">请求失败</span>
+    </div>
+
+    <div style="margin-top:10px;">
+      <label class="check-label">
+        <input type="checkbox" id="autoScroll" checked/> 自动滚动到底部
+      </label>
+    </div>
+
+    <div style="margin-top:15px;">
+      <h3>扫描日志 (仅显示最近 500 条)</h3>
+      <div id="logContainer" class="log-container"></div>
+    </div>
+  </div>
+
+  <!-- 右侧进度+可用域名列表 -->
+  <div class="right-panel">
+    <h3>扫描进度</h3>
+    <div>
+      <span>已扫描: <span id="scannedCount">0</span></span> / 
+      <span>总数量: <span id="totalCount">0</span></span>
+    </div>
+    <hr />
+    <h3>可注册域名</h3>
+    <div id="availableList" class="available-list"></div>
+  </div>
+</div>
+
+<!-- 在页面下方增加 "Patterns 规则说明" -->
+<div class="patterns-guide">
+  <h3>Patterns 规则说明</h3>
+  <p><strong>1) 标准模式</strong></p>
+  <ul>
+    <li>A 表示 [a-z] 小写字母</li>
+    <li>B 表示 [0-9] 数字</li>
+    <li>C 表示 [a-z0-9] 小写字母 + 数字</li>
+  </ul>
+  <p>例如：<code>AABB</code> 表示 前2位是小写字母，后2位是数字，共26x26x10x10种组合。</p>
+
+  <p><strong>2) 风格模式</strong></p>
+  <ul>
+    <li>可使用字母 (A～Z) 表示不同占位符，但长度不限</li>
+    <li>相同字母 -> 相同字符；不同字母 -> 独立选</li>
+    <li>会从 <code>abcdefghijklmnopqrstuvwxyz0123456789</code> 中自由组合</li>
+  </ul>
+  <p>例如：<code>ABAB</code> -> A、B 两种占位符，A和B各自可取 36 种字符，但同一个 A 相同字符。</p>
+
+  <p><strong>3) Literal 模式</strong></p>
+  <ul>
+    <li>直接以输入字符串作为域名主体，不做组合。</li>
+  </ul>
+  <p>例如输入 <code>example</code>, 就会只生成 "example.com", "example.net" 等。</p>
+</div>
+
+<script>
+  // ######## 全局状态/变量 ########
+  let eventSource = null;
+
+  // 用于日志的缓冲队列 + DOM刷新管理
+  let logQueue = [];          // 队列(数组)用于缓存日志
+  let isLogRendering = false; // 标识是否有定时器在刷新
+  const LOG_RENDER_INTERVAL = 100; // 每100ms刷新一次
+  const MAX_LOG_LINES = 500;
+
+  // 进度信息
+  let scannedCount = 0;
+  let totalCount = 0;
+
+  window.addEventListener('DOMContentLoaded', () => {
+    connectSSE();
+    fetchSuffixes(); // 动态获取后缀列表
+  });
+
+  // 动态获取后缀选项 (后端 /api/suffixes 返回如 [".com",".cn",".net"])
+  function fetchSuffixes() {
+    const backendUrl = document.getElementById("backendUrl").value;
+    fetch(backendUrl + '/api/suffixes')
+      .then(resp => resp.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          fillSuffixesCheckboxes(data);
+        } else {
+          appendLog("fetchSuffixes: 返回数据不是数组", true);
+        }
+      })
+      .catch(err => {
+        appendLog("fetchSuffixes 请求异常: " + err, true);
+      });
+  }
+
+  // 用 checkbox 形式呈现 suffix
+  function fillSuffixesCheckboxes(list) {
+    const container = document.getElementById("suffixesContainer");
+    container.innerHTML = ""; // 清空旧选项
+
+    list.forEach(sfx => {
+      const label = document.createElement("label");
+      label.style.display = "block";
+      label.style.cursor = "pointer";
+
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = sfx;
+
+      // 默认选中 .com
+      if (sfx === ".com") {
+        input.checked = true;
+      }
+
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(" " + sfx));
+
+      container.appendChild(label);
+    });
+  }
+
+  // 建立 SSE 连接
+  function connectSSE() {
+    const backendUrl = document.getElementById("backendUrl").value;
+    if (eventSource) {
+      eventSource.close();
+    }
+    eventSource = new EventSource(backendUrl + '/api/events');
+
+    eventSource.onopen = () => {
+      appendLog("【SSE】连接已建立", false);
+    };
+
+    // 后端未指定 event 类型时
+    eventSource.onmessage = (evt) => {
+      appendLog("[message] " + evt.data, false);
+    };
+
+    // 指定事件: scanned / available / fail
+    eventSource.addEventListener('scanned', (evt) => {
+      const txt = evt.data;
+      const match = txt.match(/^\[(\d+)\/(\d+)\]\s+(.*)/);
+      if (match) {
+        scannedCount = parseInt(match[1]);
+        totalCount = parseInt(match[2]);
+        updateProgressUI();
+        appendLog("[scanned] " + txt, false);
+      } else if (txt === "扫描结束！" || txt.includes("扫描被终止")) {
+        appendLog("[scanned] " + txt, false);
+      } else {
+        appendLog("[scanned] " + txt, false);
+      }
+    });
+
+    eventSource.addEventListener('available', (evt) => {
+      appendLog("[available] " + evt.data, false);
+      addAvailable(evt.data);
+    });
+
+    eventSource.addEventListener('fail', (evt) => {
+      appendLog("[fail] " + evt.data, true);
+    });
+
+    eventSource.onerror = (err) => {
+      appendLog("【SSE】错误或连接断开", true);
+    };
+  }
+
+  // 更新页面上进度
+  function updateProgressUI() {
+    document.getElementById("scannedCount").textContent = scannedCount;
+    document.getElementById("totalCount").textContent = totalCount;
+  }
+
+  // 可注册域名显示
+  function addAvailable(domain) {
+    const listDiv = document.getElementById("availableList");
+    const line = document.createElement("div");
+    line.textContent = domain;
+    listDiv.appendChild(line);
+    listDiv.scrollTop = listDiv.scrollHeight;
+  }
+
+  // ======= 日志系统: 以 队列+定时器方式 进行渲染 =======
+  function appendLog(msg, isError) {
+    const now = new Date().toLocaleTimeString();
+    logQueue.push({ text: `${now} ${msg}`, isError });
+
+    if (!isLogRendering) {
+      isLogRendering = true;
+      setTimeout(renderLogsBatch, LOG_RENDER_INTERVAL);
+    }
+  }
+
+  function renderLogsBatch() {
+    const container = document.getElementById("logContainer");
+    const autoScroll = document.getElementById("autoScroll").checked;
+
+    while (logQueue.length > 0) {
+      const item = logQueue.shift();
+      const div = document.createElement("div");
+      div.className = "log-line" + (item.isError ? " error-line" : "");
+      div.textContent = item.text;
+      container.appendChild(div);
+    }
+
+    // 控制最大行数
+    while (container.children.length > MAX_LOG_LINES) {
+      container.removeChild(container.firstChild);
+    }
+
+    if (autoScroll) {
+      container.scrollTop = container.scrollHeight;
+    }
+
+    isLogRendering = false;
+    if (logQueue.length > 0) {
+      isLogRendering = true;
+      setTimeout(renderLogsBatch, LOG_RENDER_INTERVAL);
+    }
+  }
+
+  // ============ 操作按钮: start/pause/resume/stop ============
+  function showFailedFlag() {
+    document.getElementById("failedFlag").style.display = "inline-block";
+  }
+  function hideFailedFlag() {
+    document.getElementById("failedFlag").style.display = "none";
+  }
+
+  // 读取所有勾选的 suffix
+  function getCheckedSuffixes() {
+    const container = document.getElementById("suffixesContainer");
+    const inputs = container.querySelectorAll('input[type="checkbox"]:checked');
+    let selectedSuffixes = [];
+    inputs.forEach(chk => {
+      selectedSuffixes.push(chk.value);
+    });
+    return selectedSuffixes;
+  }
+
+  function startScan() {
+    hideFailedFlag();
+    const backendUrl = document.getElementById("backendUrl").value;
+    const mode = document.getElementById("modeSelect").value; 
+    const patterns = document.getElementById("patterns").value;
+    const concurrency = document.getElementById("concurrency").value;
+
+    // 收集勾选的后缀
+    const selectedSuffixes = getCheckedSuffixes();
+    const suffixes = selectedSuffixes.join(",");
+
+    // 清空可注册列表、进度
+    document.getElementById("availableList").innerHTML = "";
+    scannedCount = 0;
+    totalCount = 0;
+    updateProgressUI();
+
+    fetch(backendUrl + '/api/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        mode: mode,
+        patterns: patterns,
+        suffixes: suffixes,
+        concurrency: concurrency
+      })
+    })
+    .then(resp => {
+      if (!resp.ok) {
+        appendLog("startScan 请求失败，HTTP状态: " + resp.status, true);
+        showFailedFlag();
+      } else {
+        appendLog("startScan 请求成功", false);
+      }
+    })
+    .catch(err => {
+      appendLog("startScan 请求异常: " + err, true);
+      showFailedFlag();
+    });
+  }
+
+  function pauseScan() {
+    hideFailedFlag();
+    const backendUrl = document.getElementById("backendUrl").value;
+    fetch(backendUrl + '/api/pause', { method: 'POST' })
+    .then(resp => {
+      if (!resp.ok) {
+        appendLog("pauseScan 请求失败，HTTP状态: " + resp.status, true);
+        showFailedFlag();
+      } else {
+        appendLog("pauseScan 请求成功", false);
+      }
+    })
+    .catch(err => {
+      appendLog("pauseScan 请求异常: " + err, true);
+      showFailedFlag();
+    });
+  }
+
+  function resumeScan() {
+    hideFailedFlag();
+    const backendUrl = document.getElementById("backendUrl").value;
+    fetch(backendUrl + '/api/resume', { method: 'POST' })
+    .then(resp => {
+      if (!resp.ok) {
+        appendLog("resumeScan 请求失败，HTTP状态: " + resp.status, true);
+        showFailedFlag();
+      } else {
+        appendLog("resumeScan 请求成功", false);
+      }
+    })
+    .catch(err => {
+      appendLog("resumeScan 请求异常: " + err, true);
+      showFailedFlag();
+    });
+  }
+
+  function stopScan() {
+    hideFailedFlag();
+    const backendUrl = document.getElementById("backendUrl").value;
+    fetch(backendUrl + '/api/stop', { method: 'POST' })
+    .then(resp => {
+      if (!resp.ok) {
+        appendLog("stopScan 请求失败，HTTP状态: " + resp.status, true);
+        showFailedFlag();
+      } else {
+        appendLog("stopScan 请求成功", false);
+      }
+    })
+    .catch(err => {
+      appendLog("stopScan 请求异常: " + err, true);
+      showFailedFlag();
+    });
+  }
+</script>
+</body>
+</html>
